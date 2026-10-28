@@ -7,6 +7,7 @@ const STRAW_DARK := Color(0.60, 0.42, 0.16)
 
 var terrain: Terrain
 var entrance := Vector3.ZERO ## Where bees deliver nectar.
+var hole := Vector3.ZERO ## Fly into this to go inside.
 var light: OmniLight3D
 
 
@@ -76,7 +77,8 @@ func _ready() -> void:
 	dome.radius = 1.65
 	_add_shape(body, dome, Vector3(0, 2.1, 0))
 
-	entrance = global_position + Vector3(0.0, 1.45, 2.3)
+	entrance = global_position + Vector3(0.0, 1.6, 2.6)
+	hole = global_position + Vector3(0.0, 1.25, 1.85)
 
 	light = OmniLight3D.new()
 	light.light_color = Color(1.0, 0.7, 0.3)

@@ -1,5 +1,7 @@
+class_name World
 extends Node3D
-## Builds the world, runs the day/night cycle and ambience.
+## Builds the world, runs the day/night cycle and ambience, and moves the bee
+## between the meadow and the inside of the hive.
 
 const DAY_LENGTH := 600.0 # seconds for a full day (nights pass three times faster)
 
@@ -20,8 +22,14 @@ var sun: DirectionalLight3D
 var moon: DirectionalLight3D
 var env: Environment
 var sky_mat: ShaderMaterial
+var interior: HiveInterior
 var time_of_day := 0.3
 var night := 0.0
+var inside := false
+
+var _outside: Node3D
+var _transition := false
+var _wind: AudioStreamPlayer
 
 var _workers: Array[WorkerBee] = []
 var _water_mat: ShaderMaterial
@@ -39,21 +47,26 @@ func _ready() -> void:
 	var view := _parse_args()
 	_setup_environment()
 
+	_outside = Node3D.new()
+	add_child(_outside)
 	terrain = Terrain.new()
-	add_child(terrain)
+	_outside.add_child(terrain)
 	_build_water()
 	vegetation = Vegetation.new()
 	vegetation.terrain = terrain
-	add_child(vegetation)
+	_outside.add_child(vegetation)
 	flowers = FlowerField.new()
 	flowers.terrain = terrain
 	flowers.vegetation = vegetation
-	add_child(flowers)
+	_outside.add_child(flowers)
 	hive = Hive.new()
 	hive.terrain = terrain
-	add_child(hive)
+	_outside.add_child(hive)
+	interior = HiveInterior.new()
+	add_child(interior)
 
 	bee = Bee.new()
+	bee.world = self
 	bee.terrain = terrain
 	bee.flowers = flowers
 	bee.hive = hive
@@ -79,6 +92,58 @@ func _ready() -> void:
 	_sync_workers()
 	apply_quality()
 	_update_day(0.0)
+	if view.has("inside"):
+		_go_inside()
+		if view.has("pos"):
+			bee.teleport(view["pos"], view.get("yaw", 0.0))
+			bee.pitch = view.get("pitch", -0.1)
+
+
+func enter_hive() -> void:
+	if inside or _transition:
+		return
+	_transition = true
+	hud.fade(func() -> void:
+		_go_inside()
+		_transition = false)
+
+
+func exit_hive() -> void:
+	if not inside or _transition:
+		return
+	_transition = true
+	hud.fade(func() -> void:
+		inside = false
+		interior.set_active(false)
+		_outside.visible = true
+		env.background_mode = Environment.BG_SKY
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+		env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+		env.fog_enabled = true
+		_wind.volume_db = -22.0
+		bee.teleport(hive.entrance + Vector3(0.0, 0.2, 1.6), PI)
+		_sky_timer = 0.0
+		_update_day(0.0)
+		_transition = false)
+
+
+func _go_inside() -> void:
+	inside = true
+	_outside.visible = false
+	interior.set_active(true)
+	sun.visible = false
+	moon.visible = false
+	_fireflies.emitting = false
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.04, 0.025, 0.01)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(1.0, 0.85, 0.65)
+	env.ambient_light_energy = 0.4
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+	env.fog_enabled = false
+	_wind.volume_db = -40.0
+	bee.teleport(interior.spawn_point, 0.0)
+	Game.message.emit("Welcome home! Queen Melissa is waiting in the middle of the hive.")
 
 
 func _process(delta: float) -> void:
@@ -91,7 +156,7 @@ func _process(delta: float) -> void:
 	_bird_timer -= delta
 	if _bird_timer <= 0.0:
 		_bird_timer = randf_range(4.0, 11.0)
-		if night < 0.3:
+		if night < 0.3 and not inside:
 			_bird.pitch_scale = randf_range(0.8, 1.25)
 			_bird.volume_db = randf_range(-26.0, -18.0)
 			_bird.play()
@@ -122,7 +187,7 @@ func _sync_workers() -> void:
 		w.hive = hive
 		w.terrain = terrain
 		w.position = hive.entrance + Vector3(randf_range(-1.0, 1.0), 0.5, randf_range(0.5, 2.0))
-		add_child(w)
+		_outside.add_child(w)
 		_workers.append(w)
 
 
@@ -147,6 +212,11 @@ func _parse_args() -> Dictionary:
 				view["yaw"] = value.to_float()
 			"--pitch":
 				view["pitch"] = value.to_float()
+			"--inside":
+				view["inside"] = true
+			"--honey":
+				Game.honey = value.to_float()
+				Game.hive_pollen = value.to_float() * 0.4
 	return view
 
 
@@ -210,7 +280,7 @@ func _build_water() -> void:
 	water.material_override = _water_mat
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	water.position = Vector3(Terrain.POND_CENTER.x, Terrain.WATER_LEVEL, Terrain.POND_CENTER.y)
-	add_child(water)
+	_outside.add_child(water)
 
 
 func _build_ambience() -> void:
@@ -251,11 +321,11 @@ func _build_ambience() -> void:
 	_fireflies.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_fireflies)
 
-	var wind := AudioStreamPlayer.new()
-	wind.stream = AudioSynth.wind()
-	wind.volume_db = -22.0
-	wind.autoplay = true
-	add_child(wind)
+	_wind = AudioStreamPlayer.new()
+	_wind.stream = AudioSynth.wind()
+	_wind.volume_db = -22.0
+	_wind.autoplay = true
+	add_child(_wind)
 	_bird = AudioStreamPlayer.new()
 	_bird.stream = AudioSynth.chirp()
 	add_child(_bird)
@@ -269,6 +339,8 @@ func _update_day(delta: float) -> void:
 	var day := smoothstep(-0.12, 0.2, elev)
 	night = 1.0 - day
 	var golden := (1.0 - smoothstep(0.05, 0.4, elev)) * smoothstep(-0.15, 0.02, elev)
+	if inside:
+		return
 
 	sun.basis = Basis.looking_at(-sun_dir, Vector3.UP)
 	sun.light_energy = 1.7 * smoothstep(-0.05, 0.15, elev)

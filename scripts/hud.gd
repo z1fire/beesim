@@ -24,6 +24,15 @@ var _hive_stats: Label
 var _upgrade_rows := {}
 var _pause_panel: PanelContainer
 var _intro_panel: PanelContainer
+var _queen_panel: PanelContainer
+var _queen_text: Label
+var _quest_text: Label
+var _quest_bar: ProgressBar
+var _claim_button: Button
+var _quest_label: Label
+var _interact_button: TouchScreenButton
+var _interact_label: Label
+var _fade: ColorRect
 var _cam_button: Button
 var _quality_button: Button
 var _buttons: Array[TouchScreenButton] = []
@@ -55,6 +64,12 @@ func _ready() -> void:
 	_build_hive_panel()
 	_build_pause_panel()
 	_build_intro_panel()
+	_build_queen_panel()
+	_fade = ColorRect.new()
+	_fade.color = Color(0.05, 0.03, 0.0, 0.0)
+	_fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_fade)
 	if _touch:
 		_build_touch_controls()
 	get_viewport().size_changed.connect(_layout)
@@ -100,9 +115,30 @@ func toggle_hive() -> void:
 	_update_menu_state()
 
 
+func open_queen() -> void:
+	_refresh_queen()
+	_queen_panel.visible = true
+	_update_menu_state()
+
+
+func close_queen() -> void:
+	_queen_panel.visible = false
+	_update_menu_state()
+
+
+## Fades to black, runs the callback, then fades back in.
+func fade(callback: Callable) -> void:
+	var tween := create_tween()
+	tween.tween_property(_fade, "color:a", 1.0, 0.3)
+	tween.tween_callback(callback)
+	tween.tween_property(_fade, "color:a", 0.0, 0.45)
+
+
 func _process(_delta: float) -> void:
 	if Input.is_action_just_pressed("pause"):
-		if _hive_panel.visible:
+		if _queen_panel.visible:
+			close_queen()
+		elif _hive_panel.visible:
 			toggle_hive()
 		elif not _intro_panel.visible:
 			toggle_pause()
@@ -110,7 +146,9 @@ func _process(_delta: float) -> void:
 		if Input.is_action_just_pressed("toggle_camera"):
 			Game.third_person = not Game.third_person
 			show_toast("Third-person view" if Game.third_person else "First-person view")
-		if Input.is_action_just_pressed("hive_menu"):
+		if Input.is_action_just_pressed("interact") and not menu_open:
+			bee.interact()
+		if Input.is_action_just_pressed("hive_menu") and not _queen_panel.visible:
 			if _hive_panel.visible or bee.at_hive:
 				toggle_hive()
 			else:
@@ -122,13 +160,22 @@ func _process(_delta: float) -> void:
 			_refresh_hive()
 	if _hive_button:
 		_hive_button.visible = bee.at_hive and not menu_open
+	if _interact_button:
+		var labels := {"enter": "ENTER", "exit": "EXIT", "talk": "TALK"}
+		var what := bee.interaction()
+		_interact_button.visible = what != "" and not menu_open
+		_interact_label.text = labels.get(what, "")
+	if _queen_panel.visible:
+		_refresh_queen()
 	_update_status()
 	_overlay.queue_redraw()
 
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
-		if _hive_panel.visible:
+		if _queen_panel.visible:
+			close_queen()
+		elif _hive_panel.visible:
 			toggle_hive()
 		elif not _intro_panel.visible:
 			toggle_pause()
@@ -174,7 +221,7 @@ func _on_button(pos: Vector2) -> bool:
 
 
 func _update_menu_state() -> void:
-	menu_open = _pause_panel.visible or _hive_panel.visible or _intro_panel.visible
+	menu_open = _pause_panel.visible or _hive_panel.visible or _intro_panel.visible or _queen_panel.visible
 	if menu_open:
 		joy = Vector2.ZERO
 		_joy_index = -1
@@ -182,7 +229,7 @@ func _update_menu_state() -> void:
 	if not _touch:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if menu_open else Input.MOUSE_MODE_CAPTURED
 	for b in _buttons:
-		if b != _hive_button:
+		if b != _hive_button and b != _interact_button:
 			b.visible = not menu_open
 
 
@@ -256,6 +303,10 @@ func _build_status() -> void:
 	_bars["nectar"] = _add_bar(box, "Nectar", Color(1.0, 0.6, 0.1))
 	_bars["pollen"] = _add_bar(box, "Pollen", Color(1.0, 0.9, 0.25))
 	_bars["energy"] = _add_bar(box, "Energy", Color(0.45, 0.88, 0.35))
+	_quest_label = _label("", 16, Color(1.0, 0.9, 0.65))
+	_quest_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_quest_label.custom_minimum_size.x = 330
+	box.add_child(_quest_label)
 
 
 func _add_bar(parent: Control, title: String, color: Color) -> Array:
@@ -401,7 +452,8 @@ func _build_intro_panel() -> void:
 	box.add_child(_label("Bee Sim", 44, HONEY))
 	var how := _label("You are a honeybee! Fly to flowers and hover close to sip nectar and gather pollen. "
 		+ "Carry pollen between flowers of the same kind to pollinate them, and new flowers will sprout. "
-		+ "Bring your haul home to the hive, where nectar ripens into honey. Spend honey on upgrades and worker bees.", 20)
+		+ "Bring your haul home to the hive, where nectar ripens into honey. Fly inside the hive to meet Queen Melissa, "
+		+ "who has tasks for you, and spend your honey on upgrades and worker bees.", 20)
 	how.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	how.custom_minimum_size.x = 660
 	box.add_child(how)
@@ -418,6 +470,58 @@ func _build_intro_panel() -> void:
 		_update_menu_state()))
 
 
+func _build_queen_panel() -> void:
+	var box := _panel(700)
+	_queen_panel = box.get_parent() as PanelContainer
+	box.add_child(_label("Queen Melissa", 38, HONEY))
+	_queen_text = _label("", 20)
+	_queen_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_queen_text.custom_minimum_size.x = 660
+	box.add_child(_queen_text)
+	box.add_child(HSeparator.new())
+	_quest_text = _label("", 22, Color(1.0, 0.9, 0.65))
+	_quest_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_quest_text.custom_minimum_size.x = 660
+	box.add_child(_quest_text)
+	_quest_bar = ProgressBar.new()
+	_quest_bar.custom_minimum_size = Vector2(660, 24)
+	_quest_bar.show_percentage = false
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0, 0, 0, 0.45)
+	bg.set_corner_radius_all(10)
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = HONEY
+	fg.set_corner_radius_all(10)
+	_quest_bar.add_theme_stylebox_override("background", bg)
+	_quest_bar.add_theme_stylebox_override("fill", fg)
+	box.add_child(_quest_bar)
+	_claim_button = _button("", func() -> void:
+		var reward := Game.claim_quest()
+		if reward > 0.0:
+			show_toast("The Queen rewards you with %d honey!" % int(reward))
+		_refresh_queen())
+	box.add_child(_claim_button)
+	box.add_child(_button("Goodbye, Your Majesty", close_queen))
+
+
+func _refresh_queen() -> void:
+	var q := Game.quest()
+	if q["done"]:
+		_queen_text.text = "Splendid work, my dear! The whole colony is buzzing about you. Here is your reward."
+	elif Game.quest_index == 0 and q["progress"] <= 0.0:
+		_queen_text.text = "Welcome, little one. I am Queen Melissa. Every bee in this hive is my child, and each of us works for the colony. Will you help us grow strong?"
+	else:
+		_queen_text.text = "The colony is counting on you. Come back to me when the task is done."
+	_quest_text.text = "Task %d: %s" % [Game.quest_index + 1, q["text"]]
+	_quest_bar.max_value = q["target"]
+	_quest_bar.value = q["progress"]
+	_claim_button.disabled = not q["done"]
+	if q["done"]:
+		_claim_button.text = "Claim %d honey" % int(q["reward"])
+	else:
+		_claim_button.text = "%d / %d done" % [int(q["progress"]), int(q["target"])]
+
+
 func _build_touch_controls() -> void:
 	_buttons.append(_touch_button("UP", "ascend", 62))
 	_buttons.append(_touch_button("DOWN", "descend", 52))
@@ -426,6 +530,9 @@ func _build_touch_controls() -> void:
 	_buttons.append(_touch_button("II", "pause", 40))
 	_hive_button = _touch_button("HIVE", "hive_menu", 54)
 	_buttons.append(_hive_button)
+	_interact_button = _touch_button("", "interact", 54)
+	_interact_label = _interact_button.get_child(0) as Label
+	_buttons.append(_interact_button)
 
 
 func _touch_button(text: String, action: String, radius: int) -> TouchScreenButton:
@@ -481,6 +588,8 @@ func _layout() -> void:
 				center = Vector2(s.x - 270, s.y - 115)
 			"hive_menu":
 				center = Vector2(s.x - 275, s.y - 265)
+			"interact":
+				center = Vector2(s.x - 420, s.y - 150)
 			"toggle_camera":
 				center = Vector2(s.x - 190, 64)
 			"pause":
@@ -495,6 +604,11 @@ func _update_status() -> void:
 	_set_bar("nectar", Game.nectar, Game.nectar_capacity())
 	_set_bar("pollen", Game.pollen, Game.pollen_capacity())
 	_set_bar("energy", Game.energy, Game.max_energy())
+	var q := Game.quest()
+	if q["done"]:
+		_quest_label.text = "Task done! Visit the Queen inside the hive."
+	else:
+		_quest_label.text = "Queen's task: %s (%d/%d)" % [q["text"], int(q["progress"]), int(q["target"])]
 
 
 func _set_bar(key: String, value: float, maximum: float) -> void:
@@ -553,14 +667,19 @@ func _draw_overlay() -> void:
 func _draw_hive_marker() -> void:
 	if not bee or not hive:
 		return
-	var dist := bee.global_position.distance_to(hive.entrance)
-	if dist < 6.0:
+	var inside := bee.world.inside
+	var goal := bee.world.interior.queen_position() if inside else hive.entrance
+	var dist := bee.global_position.distance_to(goal)
+	if dist < (2.5 if inside else 6.0):
 		return
 	var cam := bee.camera
-	var target := hive.entrance + Vector3.UP * 2.5
+	var target := goal + Vector3.UP * (1.0 if inside else 2.5)
 	var size := _root.size
 	var center := size * 0.5
 	var margin := 70.0
+	var depth := (cam.global_transform.affine_inverse() * target).z
+	if absf(depth) < 0.05:
+		return
 	var behind := cam.is_position_behind(target)
 	var p := cam.unproject_position(target)
 	var inner := Rect2(Vector2.ONE * margin, size - Vector2.ONE * margin * 2.0)
@@ -581,6 +700,8 @@ func _draw_hive_marker() -> void:
 			p + n * 20.0 - n.orthogonal() * 10.0]), color)
 	_draw_hex(_overlay, p, 18.0, color)
 	var font := ThemeDB.fallback_font
+	if Game.quest()["done"]:
+		_overlay.draw_string(font, p + Vector2(-20, 8), "!", HORIZONTAL_ALIGNMENT_CENTER, 40, 24, Color(0.3, 0.15, 0.0))
 	_overlay.draw_string_outline(font, p + Vector2(-60, 40), "%d m" % int(dist), HORIZONTAL_ALIGNMENT_CENTER, 120, 18, 4, Color(0, 0, 0, 0.6))
 	_overlay.draw_string(font, p + Vector2(-60, 40), "%d m" % int(dist), HORIZONTAL_ALIGNMENT_CENTER, 120, 18, Color.WHITE)
 

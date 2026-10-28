@@ -4,6 +4,8 @@ extends Node3D
 
 var simple := false ## Fewer parts, for worker bees.
 var pollen_amount := 0.0 ## 0..1, fills the pollen baskets on the hind legs.
+var queen := false ## Long abdomen and a little crown.
+var flying := true ## False folds the wings back, for bees crawling on comb.
 
 var _wings: Array[Node3D] = []
 var _baskets: Array[Node3D] = []
@@ -16,8 +18,16 @@ static var _meshes := {}
 func _ready() -> void:
 	_t = randf() * 10.0
 	_sphere(Vector3(0.0, 0.0, -0.01), Vector3(0.17, 0.16, 0.18), _mat("thorax"))
-	var abdomen := _sphere(Vector3(0.0, -0.03, 0.16), Vector3(0.2, 0.18, 0.3), _mat("abdomen"))
-	abdomen.rotation.x = 0.28
+	var abdomen: MeshInstance3D
+	if queen:
+		abdomen = _sphere(Vector3(0.0, -0.04, 0.25), Vector3(0.21, 0.19, 0.48), _mat("queen"))
+		var crown := MeshInstance3D.new()
+		crown.mesh = _crown_mesh()
+		crown.material_override = _mat("gold")
+		add_child(crown)
+	else:
+		abdomen = _sphere(Vector3(0.0, -0.03, 0.16), Vector3(0.2, 0.18, 0.3), _mat("abdomen"))
+	abdomen.rotation.x = 0.28 if not queen else 0.12
 	_sphere(Vector3(0.0, 0.01, -0.125), Vector3(0.13, 0.12, 0.1), _mat("dark"))
 	for side in [-1.0, 1.0]:
 		_sphere(Vector3(0.045 * side, 0.02, -0.135), Vector3(0.045, 0.075, 0.06), _mat("eye"))
@@ -38,7 +48,10 @@ func _process(delta: float) -> void:
 	var flap := sin(_t * 62.0) * 0.8
 	for w in _wings:
 		var side: float = w.get_meta("side")
-		w.rotation = Vector3(0.0, -side * 0.3, side * (flap + 0.2))
+		if flying:
+			w.rotation = Vector3(0.0, -side * 0.3, side * (flap + 0.2))
+		else:
+			w.rotation = Vector3(0.0, -side * 1.3, side * -0.05)
 	var s := clampf(pollen_amount, 0.0, 1.0)
 	for b in _baskets:
 		b.visible = s > 0.02
@@ -103,16 +116,44 @@ static func _limbs_mesh() -> ArrayMesh:
 	return mesh
 
 
+static func _crown_mesh() -> ArrayMesh:
+	if _meshes.has("crown"):
+		return _meshes["crown"]
+	var st := MeshKit.begin()
+	var gold := MeshKit.lin(Color(1.0, 0.82, 0.3))
+	var base := Vector3(0.0, 0.07, -0.125)
+	MeshKit.torus(st, Transform3D(Basis(), base), 0.05, 0.012, 20, 6, func(_a: float, _b: float) -> Color: return gold)
+	for k in 5:
+		var d := Vector3.RIGHT.rotated(Vector3.UP, TAU * k / 5.0) * 0.05
+		MeshKit.tube(st, PackedVector3Array([base + d, base + d * 1.15 + Vector3.UP * 0.065]),
+			PackedFloat32Array([0.013, 0.002]), 5, gold, gold)
+		MeshKit.ellipsoid(st, Transform3D(Basis(), base + d * 1.15 + Vector3.UP * 0.068), Vector3.ONE * 0.008, 3, 6,
+			MeshKit.lin(Color(1.0, 0.3, 0.4)), MeshKit.lin(Color(0.8, 0.1, 0.2)))
+	var mesh := st.commit()
+	_meshes["crown"] = mesh
+	return mesh
+
+
 static func _mat(key: String) -> Material:
 	if _materials.has(key):
 		return _materials[key]
 	var m: Material
 	match key:
-		"abdomen", "thorax":
+		"abdomen", "thorax", "queen":
 			var body := ShaderMaterial.new()
 			body.shader = load("res://shaders/bee_body.gdshader")
-			body.set_shader_parameter("banded", 1.0 if key == "abdomen" else 0.0)
+			body.set_shader_parameter("banded", 0.0 if key == "thorax" else 1.0)
+			if key == "queen":
+				body.set_shader_parameter("yellow", Color(0.92, 0.55, 0.14))
 			m = body
+		"gold":
+			var gold := StandardMaterial3D.new()
+			gold.vertex_color_use_as_albedo = true
+			gold.metallic = 1.0
+			gold.roughness = 0.25
+			gold.emission_enabled = true
+			gold.emission = Color(0.5, 0.32, 0.05)
+			m = gold
 		"dark":
 			var dark := StandardMaterial3D.new()
 			dark.albedo_color = Color(0.09, 0.06, 0.04)

@@ -11,6 +11,8 @@ Fly through a sunny meadow as a honeybee. Sip nectar, gather pollen, pollinate f
 - Gameplay loop: collect nectar and pollen → deliver to the hive → nectar ripens into honey → spend honey on upgrades
 - Pollination: carry pollen between flowers of the same species to pollinate them, which refills them and sometimes sprouts a new flower
 - Worker bees you can raise to gather nectar for you
+- **Go inside the hive**: fly into the entrance to explore the honeycomb. The cells fill with your real honey and pollen stores, there's a brood nest of eggs, larvae and capped cells, and bees crawl and fly everywhere
+- **Queen Melissa** lives in the middle with her attendants and gives you tasks with honey rewards
 - Day/night cycle with sunsets, stars and fireflies
 - Energy system: rest on flowers or at the hive to recover
 - Touch controls (virtual joystick plus buttons), and keyboard and mouse on desktop
@@ -27,7 +29,8 @@ Every model, texture and sound is generated in code at startup, so the repo has 
 | Climb / dive | UP / DOWN | Space / Q |
 | Boost | BOOST | Shift |
 | Switch camera | CAM | V |
-| Open the hive (when at the hive) | HIVE | H |
+| Go in / out of the hive, talk to the Queen | Fly into the entrance, or ENTER / EXIT / TALK | Fly in, or F |
+| Upgrades (at or inside the hive) | HIVE | H |
 | Pause and settings | II / Back | Esc |
 
 ## Building

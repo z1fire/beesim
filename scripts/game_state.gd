@@ -11,6 +11,18 @@ const RIPEN_RATE := 1.5 # nectar per second the hive turns into honey
 const SAVED_KEYS := [
 	"nectar", "pollen", "hive_nectar", "hive_pollen", "honey", "total_honey", "pollinated",
 	"third_person", "high_quality", "look_sensitivity", "invert_y", "seen_intro",
+	"quest_index", "quest_progress", "quest_species",
+]
+
+## Tasks the queen hands out, in order. After the last one they repeat, growing bigger.
+const QUESTS := [
+	{"kind": "nectar", "target": 20, "reward": 15, "text": "Bring {n} nectar home to the hive."},
+	{"kind": "pollinate", "target": 3, "reward": 20, "text": "Pollinate {n} flowers by carrying pollen between flowers of the same kind."},
+	{"kind": "species", "target": 4, "reward": 20, "text": "Sip nectar from {n} different kinds of flower."},
+	{"kind": "pollen", "target": 15, "reward": 25, "text": "Bring {n} pollen home to feed the brood."},
+	{"kind": "lily", "target": 1, "reward": 25, "text": "Fly to the pond and sip nectar from a water lily."},
+	{"kind": "honey", "target": 40, "reward": 30, "text": "Make {n} honey in the hive."},
+	{"kind": "upgrade", "target": 1, "reward": 20, "text": "Buy an upgrade at the hive."},
 ]
 
 const UPGRADES := {
@@ -31,6 +43,9 @@ var honey := 0.0
 var total_honey := 0.0
 var pollinated := 0
 var levels := {"pouch": 0, "wings": 0, "stamina": 0, "workers": 0}
+var quest_index := 0
+var quest_progress := 0.0
+var quest_species: Array = []
 
 # settings
 var third_person := true
@@ -54,6 +69,7 @@ func _process(delta: float) -> void:
 		hive_nectar -= amount
 		honey += amount * HONEY_PER_NECTAR
 		total_honey += amount * HONEY_PER_NECTAR
+		quest_event("honey", amount * HONEY_PER_NECTAR)
 		changed.emit()
 	_save_timer += delta
 	if _save_timer > 20.0:
@@ -104,6 +120,7 @@ func buy_upgrade(id: String) -> bool:
 	levels[id] += 1
 	if id == "stamina":
 		energy = max_energy()
+	quest_event("upgrade", 1.0)
 	changed.emit()
 	save_game()
 	return true
@@ -112,12 +129,65 @@ func buy_upgrade(id: String) -> bool:
 ## Moves everything the bee carries into the hive. Returns (nectar, pollen) delivered.
 func deposit() -> Vector2:
 	var delivered := Vector2(nectar, pollen)
+	quest_event("nectar", nectar)
+	quest_event("pollen", pollen)
 	hive_nectar += nectar
 	hive_pollen += pollen
 	nectar = 0.0
 	pollen = 0.0
 	changed.emit()
 	return delivered
+
+
+## The current task: kind, text, target, reward, progress and done.
+func quest() -> Dictionary:
+	var base: Dictionary = QUESTS[quest_index % QUESTS.size()]
+	var scale := 1.0 + 0.5 * int(quest_index / QUESTS.size())
+	var target: float = base["target"]
+	if target > 1.0:
+		target = roundf(target * scale)
+	return {
+		"kind": base["kind"],
+		"text": (base["text"] as String).format({"n": int(target)}),
+		"target": target,
+		"reward": roundf(base["reward"] * scale),
+		"progress": minf(quest_progress, target),
+		"done": quest_progress >= target,
+	}
+
+
+func quest_event(kind: String, amount: float) -> void:
+	if amount <= 0.0:
+		return
+	var q := quest()
+	if q["done"] or q["kind"] != kind:
+		return
+	quest_progress += amount
+	if quest_progress >= q["target"]:
+		message.emit("Task complete! Visit the Queen inside the hive for your reward.")
+
+
+## Called when the bee sips nectar from a flower of the given species.
+func quest_flower(species: int) -> void:
+	if species == 5:
+		quest_event("lily", 1.0)
+	if not quest_species.has(species):
+		quest_species.append(species)
+		quest_event("species", 1.0)
+
+
+## Pays out a finished task and moves on to the next. Returns the honey rewarded.
+func claim_quest() -> float:
+	var q := quest()
+	if not q["done"]:
+		return 0.0
+	honey += q["reward"]
+	quest_index += 1
+	quest_progress = 0.0
+	quest_species = []
+	changed.emit()
+	save_game()
+	return q["reward"]
 
 
 func save_game() -> void:
@@ -153,6 +223,7 @@ func _setup_input() -> void:
 	_bind("toggle_camera", [KEY_V, KEY_C])
 	_bind("hive_menu", [KEY_H, KEY_TAB])
 	_bind("pause", [KEY_ESCAPE, KEY_P])
+	_bind("interact", [KEY_F, KEY_ENTER])
 
 
 func _bind(action: String, keys: Array) -> void:
