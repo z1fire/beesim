@@ -1,0 +1,13 @@
+# Godot
+.godot/
+*.translation
+export_credentials.cfg
+
+# Local tools, builds and signing keys (never commit the keystore!)
+.tools/
+.signing/
+build/
+*.keystore
+*.jks
+*.apk
+*.aab
