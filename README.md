@@ -4,6 +4,12 @@ Fly through a sunny meadow as a honeybee. Sip nectar, gather pollen, pollinate f
 
 **[Download the latest APK](https://github.com/z1fire/beesim/releases/latest/download/BeeSim.apk)** (Android 7+, arm64/armv7)
 
+## How to win
+
+Grow your colony through four stages: **Small Hive → Growing Colony → Thriving Colony → Ready to Swarm**. Each stage has goals (make honey, pollinate flowers, raise worker bees, finish the Queen's tasks, buy upgrades), and you can track them in the hive menu.
+
+When the hive is ready to swarm, Queen Melissa asks you to scout the hollow oak at the edge of the meadow. Then you lead a swarm of 160 bees to their new home. Once they move in, you've won the season! After that you can keep exploring, or start a new season with a fresh colony and bigger goals.
+
 ## Features
 
 - A fully 3D meadow: rolling hills, a lily pond, oaks and pines, swaying grass, and more than 600 flowers in six species

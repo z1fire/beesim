@@ -36,6 +36,7 @@ var _queen_target := Vector3.ZERO
 var _queen_timer := 0.0
 var _rng := RandomNumberGenerator.new()
 var _hum: AudioStreamPlayer
+var _extra: Array[InteriorBee] = []
 
 
 func _ready() -> void:
@@ -59,11 +60,26 @@ func set_active(on: bool) -> void:
 	visible = on
 	process_mode = Node.PROCESS_MODE_INHERIT if on else Node.PROCESS_MODE_DISABLED
 	if on:
+		_sync_population()
 		_shown = Vector2i(-1, -1)
 		_update_stores()
 		_hum.play()
 	else:
 		_hum.stop()
+
+
+## The hive gets busier as the colony grows.
+func _sync_population() -> void:
+	var want: int = Game.stage * 6
+	while _extra.size() < want:
+		var b := InteriorBee.new()
+		b.interior = self
+		b.mode = InteriorBee.Mode.FLY if _extra.size() % 2 == 0 else InteriorBee.Mode.CRAWL
+		b.surface = _extra.size() % 5
+		add_child(b)
+		_extra.append(b)
+	while _extra.size() > want:
+		_extra.pop_back().queue_free()
 
 
 func queen_position() -> Vector3:

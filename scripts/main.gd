@@ -23,6 +23,8 @@ var moon: DirectionalLight3D
 var env: Environment
 var sky_mat: ShaderMaterial
 var interior: HiveInterior
+var home: NewHome
+var swarm: Swarm
 var time_of_day := 0.3
 var night := 0.0
 var inside := false
@@ -62,6 +64,9 @@ func _ready() -> void:
 	hive = Hive.new()
 	hive.terrain = terrain
 	_outside.add_child(hive)
+	home = NewHome.new()
+	home.terrain = terrain
+	_outside.add_child(home)
 	interior = HiveInterior.new()
 	add_child(interior)
 
@@ -80,6 +85,16 @@ func _ready() -> void:
 		bee.pitch = view["pitch"]
 	add_child(bee)
 
+	swarm = Swarm.new()
+	swarm.leader = bee
+	swarm.home = home.hole
+	swarm.home_front = home.front
+	swarm.rally = hive.entrance + Vector3(0.0, 3.0, 2.0)
+	_outside.add_child(swarm)
+	swarm.settled.connect(_on_swarm_settled)
+	if Game.swarms > 0:
+		swarm.idle()
+
 	hud = Hud.new()
 	hud.bee = bee
 	hud.hive = hive
@@ -89,6 +104,7 @@ func _ready() -> void:
 	_build_ambience()
 	Game.changed.connect(_sync_workers)
 	Game.settings_changed.connect(apply_quality)
+	Game.season_started.connect(_on_season_started)
 	_sync_workers()
 	apply_quality()
 	_update_day(0.0)
@@ -148,6 +164,7 @@ func _go_inside() -> void:
 
 func _process(delta: float) -> void:
 	_update_day(delta)
+	_update_swarm()
 	_motes.global_position = bee.camera.global_position
 	var bp := bee.global_position
 	_fireflies.global_position = Vector3(bp.x, terrain.height_at(bp.x, bp.z) + 1.5, bp.z)
@@ -166,6 +183,43 @@ func _process(delta: float) -> void:
 		if _shot_timer > 4.0:
 			get_viewport().get_texture().get_image().save_png(_shot_path)
 			get_tree().quit()
+
+
+func _update_swarm() -> void:
+	home.set_beacon(Game.swarm_phase == Game.Swarm.SCOUT or Game.swarm_phase == Game.Swarm.LEAD)
+	if inside:
+		return
+	var p := bee.global_position
+	match Game.swarm_phase:
+		Game.Swarm.SCOUT:
+			if p.distance_to(home.front) < 8.0:
+				Game.swarm_phase = Game.Swarm.GATHER
+				Game.message.emit("What a perfect home! Fly back to the hive and the swarm will follow you here.")
+				Game.save_game()
+		Game.Swarm.GATHER:
+			if p.distance_to(hive.entrance) < 7.0:
+				Game.swarm_phase = Game.Swarm.LEAD
+				swarm.launch(hive.entrance)
+				Game.message.emit("Here comes the swarm! Lead them to the hollow oak.")
+		Game.Swarm.LEAD:
+			if p.distance_to(home.front) < 8.0:
+				Game.swarm_phase = Game.Swarm.SETTLE
+				swarm.settle()
+				Game.message.emit("The swarm is moving into its new home...")
+
+
+func _on_swarm_settled() -> void:
+	Game.swarm_phase = Game.Swarm.DONE
+	Game.swarms += 1
+	Game.save_game()
+	Fx.burst(self, home.front, Color(2.0, 1.6, 0.5), 80, 4.0)
+	hud.show_win()
+
+
+func _on_season_started() -> void:
+	for w in _workers:
+		w.queue_free()
+	_workers.clear()
 
 
 func apply_quality() -> void:
@@ -214,6 +268,9 @@ func _parse_args() -> Dictionary:
 				view["pitch"] = value.to_float()
 			"--inside":
 				view["inside"] = true
+			"--swarm":
+				Game.stage = Game.STAGES.size()
+				Game.swarm_phase = value.to_int()
 			"--honey":
 				Game.honey = value.to_float()
 				Game.hive_pollen = value.to_float() * 0.4

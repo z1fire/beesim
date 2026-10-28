@@ -3,6 +3,7 @@ extends Node
 
 signal changed
 signal settings_changed
+signal season_started
 signal message(text: String)
 
 const SAVE_PATH := "user://save.cfg"
@@ -12,7 +13,34 @@ const SAVED_KEYS := [
 	"nectar", "pollen", "hive_nectar", "hive_pollen", "honey", "total_honey", "pollinated",
 	"third_person", "high_quality", "look_sensitivity", "invert_y", "seen_intro",
 	"quest_index", "quest_progress", "quest_species",
+	"stage", "season", "swarm_phase", "swarms", "play_time", "total_nectar",
 ]
+
+## The colony grows through these stages. Meeting every goal of a stage moves on to
+## the next; after the last one the hive is ready to swarm, which wins the season.
+const STAGES := [
+	{"name": "Small Hive", "goals": [
+		{"stat": "honey", "target": 30, "text": "Make {n} honey"},
+		{"stat": "pollinated", "target": 3, "text": "Pollinate {n} flowers"},
+		{"stat": "workers", "target": 1, "text": "Raise a worker bee"},
+	]},
+	{"name": "Growing Colony", "goals": [
+		{"stat": "honey", "target": 150, "text": "Make {n} honey"},
+		{"stat": "pollinated", "target": 10, "text": "Pollinate {n} flowers"},
+		{"stat": "workers", "target": 3, "text": "Raise {n} worker bees"},
+		{"stat": "tasks", "target": 3, "text": "Complete {n} of the Queen's tasks"},
+	]},
+	{"name": "Thriving Colony", "goals": [
+		{"stat": "honey", "target": 400, "text": "Make {n} honey"},
+		{"stat": "pollinated", "target": 20, "text": "Pollinate {n} flowers"},
+		{"stat": "workers", "target": 5, "text": "Raise {n} worker bees"},
+		{"stat": "upgrades", "target": 10, "text": "Buy {n} upgrades in total"},
+	]},
+]
+
+## Swarm ending: 0 not started, 1 scouting the hollow oak, 2 heading back for the swarm,
+## 3 leading the swarm, 4 swarm moving in, 5 done (season won).
+enum Swarm { NONE, SCOUT, GATHER, LEAD, SETTLE, DONE }
 
 ## Tasks the queen hands out, in order. After the last one they repeat, growing bigger.
 const QUESTS := [
@@ -46,6 +74,12 @@ var levels := {"pouch": 0, "wings": 0, "stamina": 0, "workers": 0}
 var quest_index := 0
 var quest_progress := 0.0
 var quest_species: Array = []
+var stage := 0
+var season := 1
+var swarm_phase := 0
+var swarms := 0
+var play_time := 0.0
+var total_nectar := 0.0
 
 # settings
 var third_person := true
@@ -55,6 +89,7 @@ var invert_y := false
 var seen_intro := false
 
 var _save_timer := 0.0
+var _stage_timer := 0.0
 
 
 func _ready() -> void:
@@ -64,6 +99,11 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	play_time += delta
+	_stage_timer -= delta
+	if _stage_timer <= 0.0:
+		_stage_timer = 1.0
+		_check_stage()
 	if hive_nectar > 0.0:
 		var amount := minf(hive_nectar, RIPEN_RATE * (1.0 + levels["workers"] * 0.1) * delta)
 		hive_nectar -= amount
@@ -130,6 +170,7 @@ func buy_upgrade(id: String) -> bool:
 func deposit() -> Vector2:
 	var delivered := Vector2(nectar, pollen)
 	quest_event("nectar", nectar)
+	total_nectar += nectar
 	quest_event("pollen", pollen)
 	hive_nectar += nectar
 	hive_pollen += pollen
@@ -190,6 +231,108 @@ func claim_quest() -> float:
 	return q["reward"]
 
 
+func stat(name: String) -> float:
+	match name:
+		"honey":
+			return total_honey
+		"pollinated":
+			return pollinated
+		"workers":
+			return levels["workers"]
+		"tasks":
+			return quest_index
+		"upgrades":
+			var total := 0
+			for key in levels:
+				total += levels[key]
+			return total
+	return 0.0
+
+
+func ready_to_swarm() -> bool:
+	return stage >= STAGES.size()
+
+
+func stage_name() -> String:
+	return "Ready to Swarm" if ready_to_swarm() else STAGES[stage]["name"]
+
+
+## Goals of the current stage, each with text, progress, target and done. Later seasons need more.
+func stage_goals() -> Array:
+	var goals := []
+	if ready_to_swarm():
+		return goals
+	var mult := 1.0 + 0.5 * (season - 1)
+	for goal in STAGES[stage]["goals"]:
+		var target: float = goal["target"]
+		if target > 1.0:
+			target = roundf(target * mult)
+		var progress := minf(stat(goal["stat"]), target)
+		goals.append({"text": (goal["text"] as String).format({"n": int(target)}), "progress": progress,
+			"target": target, "done": progress >= target})
+	return goals
+
+
+## One line describing where the colony (or the swarm) is at.
+func colony_status() -> String:
+	match swarm_phase:
+		Swarm.SCOUT:
+			return "Swarm: scout the hollow oak (follow the green marker)."
+		Swarm.GATHER:
+			return "Swarm: fly back to the hive to gather the swarm."
+		Swarm.LEAD, Swarm.SETTLE:
+			return "Swarm: lead the swarm to the hollow oak!"
+		Swarm.DONE:
+			return "Your colony swarmed! Season %d complete." % season
+	if ready_to_swarm():
+		return "The hive is ready to swarm! Talk to the Queen."
+	var goals := stage_goals()
+	var done := 0
+	for g in goals:
+		if g["done"]:
+			done += 1
+	return "Colony: %s (%d/%d goals)" % [stage_name(), done, goals.size()]
+
+
+func _check_stage() -> void:
+	if ready_to_swarm():
+		return
+	for g in stage_goals():
+		if not g["done"]:
+			return
+	stage += 1
+	if ready_to_swarm():
+		message.emit("The hive is bursting with bees! It's ready to swarm. Talk to Queen Melissa.")
+	else:
+		message.emit("Your colony has grown into a %s!" % stage_name())
+	changed.emit()
+	save_game()
+
+
+## Starts over with a brand-new colony; goals get bigger each season.
+func new_season() -> void:
+	season += 1
+	nectar = 0.0
+	pollen = 0.0
+	hive_nectar = 0.0
+	hive_pollen = 0.0
+	honey = 0.0
+	total_honey = 0.0
+	total_nectar = 0.0
+	pollinated = 0
+	for key in levels:
+		levels[key] = 0
+	quest_index = 0
+	quest_progress = 0.0
+	quest_species = []
+	stage = 0
+	swarm_phase = Swarm.NONE
+	energy = max_energy()
+	season_started.emit()
+	changed.emit()
+	save_game()
+
+
 func save_game() -> void:
 	_save_timer = 0.0
 	var cfg := ConfigFile.new()
@@ -210,6 +353,9 @@ func load_game() -> void:
 	for key in saved:
 		if levels.has(key):
 			levels[key] = int(saved[key])
+	# A swarm in flight isn't saved; pick it up again from the hive.
+	if swarm_phase == Swarm.LEAD or swarm_phase == Swarm.SETTLE:
+		swarm_phase = Swarm.GATHER
 
 
 func _setup_input() -> void:

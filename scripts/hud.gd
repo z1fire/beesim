@@ -33,6 +33,11 @@ var _quest_label: Label
 var _interact_button: TouchScreenButton
 var _interact_label: Label
 var _fade: ColorRect
+var _colony_label: Label
+var _colony_text: Label
+var _win_panel: PanelContainer
+var _win_stats: Label
+var _season_button: Button
 var _cam_button: Button
 var _quality_button: Button
 var _buttons: Array[TouchScreenButton] = []
@@ -65,6 +70,7 @@ func _ready() -> void:
 	_build_pause_panel()
 	_build_intro_panel()
 	_build_queen_panel()
+	_build_win_panel()
 	_fade = ColorRect.new()
 	_fade.color = Color(0.05, 0.03, 0.0, 0.0)
 	_fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -135,7 +141,7 @@ func fade(callback: Callable) -> void:
 
 
 func _process(_delta: float) -> void:
-	if Input.is_action_just_pressed("pause"):
+	if Input.is_action_just_pressed("pause") and not _win_panel.visible:
 		if _queen_panel.visible:
 			close_queen()
 		elif _hive_panel.visible:
@@ -173,6 +179,8 @@ func _process(_delta: float) -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		if _win_panel.visible:
+			return
 		if _queen_panel.visible:
 			close_queen()
 		elif _hive_panel.visible:
@@ -221,7 +229,8 @@ func _on_button(pos: Vector2) -> bool:
 
 
 func _update_menu_state() -> void:
-	menu_open = _pause_panel.visible or _hive_panel.visible or _intro_panel.visible or _queen_panel.visible
+	menu_open = _pause_panel.visible or _hive_panel.visible or _intro_panel.visible or _queen_panel.visible \
+		or _win_panel.visible
 	if menu_open:
 		joy = Vector2.ZERO
 		_joy_index = -1
@@ -307,6 +316,10 @@ func _build_status() -> void:
 	_quest_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_quest_label.custom_minimum_size.x = 330
 	box.add_child(_quest_label)
+	_colony_label = _label("", 16, Color(0.75, 1.0, 0.6))
+	_colony_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_colony_label.custom_minimum_size.x = 330
+	box.add_child(_colony_label)
 
 
 func _add_bar(parent: Control, title: String, color: Color) -> Array:
@@ -388,6 +401,8 @@ func _build_hive_panel() -> void:
 	box.add_child(_label("The Hive", 36, HONEY))
 	_hive_stats = _label("", 19, TEXT_DIM)
 	box.add_child(_hive_stats)
+	_colony_text = _label("", 18, Color(0.75, 1.0, 0.6))
+	box.add_child(_colony_text)
 	box.add_child(HSeparator.new())
 	for id in Game.UPGRADES:
 		var info: Dictionary = Game.UPGRADES[id]
@@ -453,7 +468,8 @@ func _build_intro_panel() -> void:
 	var how := _label("You are a honeybee! Fly to flowers and hover close to sip nectar and gather pollen. "
 		+ "Carry pollen between flowers of the same kind to pollinate them, and new flowers will sprout. "
 		+ "Bring your haul home to the hive, where nectar ripens into honey. Fly inside the hive to meet Queen Melissa, "
-		+ "who has tasks for you, and spend your honey on upgrades and worker bees.", 20)
+		+ "who has tasks for you, and spend your honey on upgrades and worker bees. "
+		+ "Grow the colony until it's strong enough to swarm to a new home. That's how you win!", 20)
 	how.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	how.custom_minimum_size.x = 660
 	box.add_child(how)
@@ -495,18 +511,47 @@ func _build_queen_panel() -> void:
 	_quest_bar.add_theme_stylebox_override("background", bg)
 	_quest_bar.add_theme_stylebox_override("fill", fg)
 	box.add_child(_quest_bar)
-	_claim_button = _button("", func() -> void:
-		var reward := Game.claim_quest()
-		if reward > 0.0:
-			show_toast("The Queen rewards you with %d honey!" % int(reward))
-		_refresh_queen())
+	_claim_button = _button("", _on_queen_button)
 	box.add_child(_claim_button)
 	box.add_child(_button("Goodbye, Your Majesty", close_queen))
 
 
+func _on_queen_button() -> void:
+	if Game.ready_to_swarm() and Game.swarm_phase == Game.Swarm.NONE:
+		Game.swarm_phase = Game.Swarm.SCOUT
+		Game.save_game()
+		close_queen()
+		show_toast("Find the hollow oak at the edge of the meadow. Follow the green marker!")
+		return
+	var reward := Game.claim_quest()
+	if reward > 0.0:
+		show_toast("The Queen rewards you with %d honey!" % int(reward))
+	_refresh_queen()
+
+
 func _refresh_queen() -> void:
+	var swarming := Game.ready_to_swarm() and Game.swarm_phase < Game.Swarm.DONE
+	_quest_bar.visible = not swarming
+	if swarming:
+		_quest_text.text = "Final task: find the colony a new home."
+		_claim_button.disabled = Game.swarm_phase != Game.Swarm.NONE
+		match Game.swarm_phase:
+			Game.Swarm.NONE:
+				_queen_text.text = "Look at us, my dear! The hive is bursting with bees. When a colony grows this strong, " \
+					+ "a new queen stays here while half of us leave to start a second hive. There is a great hollow oak " \
+					+ "at the edge of the meadow. Will you scout it for us, and lead the swarm there?"
+				_claim_button.text = "I'll find us a new home!"
+			Game.Swarm.SCOUT:
+				_queen_text.text = "Fly to the hollow oak and see if it will do. Follow the green light!"
+				_claim_button.text = "Scouting..."
+			_:
+				_queen_text.text = "You found a home? Wonderful! The swarm will follow you the moment you fly out of the hive."
+				_claim_button.text = "The swarm is ready"
+		return
 	var q := Game.quest()
-	if q["done"]:
+	if Game.swarm_phase == Game.Swarm.DONE and not q["done"]:
+		_queen_text.text = "Two hives now hum in this meadow, and it's all thanks to you. There is always more to do, little one."
+	elif q["done"]:
 		_queen_text.text = "Splendid work, my dear! The whole colony is buzzing about you. Here is your reward."
 	elif Game.quest_index == 0 and q["progress"] <= 0.0:
 		_queen_text.text = "Welcome, little one. I am Queen Melissa. Every bee in this hive is my child, and each of us works for the colony. Will you help us grow strong?"
@@ -520,6 +565,42 @@ func _refresh_queen() -> void:
 		_claim_button.text = "Claim %d honey" % int(q["reward"])
 	else:
 		_claim_button.text = "%d / %d done" % [int(q["progress"]), int(q["target"])]
+
+
+func _build_win_panel() -> void:
+	var box := _panel(720)
+	_win_panel = box.get_parent() as PanelContainer
+	box.add_child(_label("The colony has swarmed!", 40, HONEY))
+	var story := _label("Half of the colony follows the old queen into the hollow oak, while a young queen takes over "
+		+ "the old hive. Thanks to you, two thriving hives now hum in the meadow. You won!", 20)
+	story.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	story.custom_minimum_size.x = 680
+	box.add_child(story)
+	box.add_child(HSeparator.new())
+	_win_stats = _label("", 20, Color(1.0, 0.9, 0.65))
+	box.add_child(_win_stats)
+	box.add_child(HSeparator.new())
+	box.add_child(_button("Keep exploring", func() -> void:
+		_win_panel.visible = false
+		_update_menu_state()))
+	_season_button = _button("", func() -> void:
+		_win_panel.visible = false
+		Game.new_season()
+		_update_menu_state()
+		show_toast("Season %d begins! Grow a brand-new colony. The goals are bigger this time." % Game.season))
+	box.add_child(_season_button)
+
+
+func show_win() -> void:
+	var minutes := int(Game.play_time / 60.0)
+	_win_stats.text = "Season %d\nHoney made: %d\nNectar delivered: %d\nFlowers pollinated: %d\nWorker bees raised: %d\nQueen's tasks completed: %d\nTime played: %dh %02dm" % [
+		Game.season, int(Game.total_honey), int(Game.total_nectar), Game.pollinated, Game.levels["workers"],
+		Game.quest_index, minutes / 60, minutes % 60]
+	_season_button.text = "Start season %d (new colony, bigger goals)" % (Game.season + 1)
+	_hive_panel.visible = false
+	_queen_panel.visible = false
+	_win_panel.visible = true
+	_update_menu_state()
 
 
 func _build_touch_controls() -> void:
@@ -604,6 +685,7 @@ func _update_status() -> void:
 	_set_bar("nectar", Game.nectar, Game.nectar_capacity())
 	_set_bar("pollen", Game.pollen, Game.pollen_capacity())
 	_set_bar("energy", Game.energy, Game.max_energy())
+	_colony_label.text = Game.colony_status()
 	var q := Game.quest()
 	if q["done"]:
 		_quest_label.text = "Task done! Visit the Queen inside the hive."
@@ -623,6 +705,12 @@ func _set_bar(key: String, value: float, maximum: float) -> void:
 func _refresh_hive() -> void:
 	_hive_stats.text = "Honey %d     Nectar ripening %d     Pollen stored %d\nWorker bees %d     Flowers pollinated %d" % [
 		int(Game.honey), ceili(Game.hive_nectar), int(Game.hive_pollen), Game.levels["workers"], Game.pollinated]
+	var colony := "Colony: %s   (season %d)" % [Game.stage_name(), Game.season]
+	for g in Game.stage_goals():
+		colony += "\n   %s  %d / %d%s" % [g["text"], int(g["progress"]), int(g["target"]), "   done!" if g["done"] else ""]
+	if Game.ready_to_swarm() and Game.swarm_phase != Game.Swarm.DONE:
+		colony += "\n   The hive is ready to swarm! Talk to Queen Melissa."
+	_colony_text.text = colony
 	for id in _upgrade_rows:
 		var row: Array = _upgrade_rows[id]
 		var level_label: Label = row[0]
@@ -669,6 +757,9 @@ func _draw_hive_marker() -> void:
 		return
 	var inside := bee.world.inside
 	var goal := bee.world.interior.queen_position() if inside else hive.entrance
+	var to_home := not inside and (Game.swarm_phase == Game.Swarm.SCOUT or Game.swarm_phase == Game.Swarm.LEAD)
+	if to_home:
+		goal = bee.world.home.front
 	var dist := bee.global_position.distance_to(goal)
 	if dist < (2.5 if inside else 6.0):
 		return
@@ -683,7 +774,7 @@ func _draw_hive_marker() -> void:
 	var behind := cam.is_position_behind(target)
 	var p := cam.unproject_position(target)
 	var inner := Rect2(Vector2.ONE * margin, size - Vector2.ONE * margin * 2.0)
-	var color := HONEY
+	var color := Color(0.6, 1.0, 0.5) if to_home else HONEY
 	color.a = 0.9
 	if behind or not inner.has_point(p):
 		var dir := p - center
